@@ -115,7 +115,8 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
         $this->io->block('Configuration finished, saving content block "' . $contentBlock->getName() . '"', style: 'bg=green;fg=black', padding: true);
 
         $this->contentBlockBuilder->create($contentBlock);
-        $this->copyTemplate($contentTypeProvider, $contentTypeName, $contentBlock);
+        $this->copyFrontendTemplate($contentTypeProvider, $contentTypeName, $contentBlock);
+        $this->copyBackendPreviewTemplate($contentTypeProvider, $contentTypeName, $contentBlock);
         $this->copyIcon($contentTypeProvider, $contentTypeName, $contentBlock);
     }
 
@@ -264,12 +265,24 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
         return $fieldConfiguration;
     }
 
-    protected function copyTemplate(ContentTypeProviderInterface $provider, string $contentTypeIdentifier, LoadedContentBlock $contentBlock): void
+    protected function copyFrontendTemplate(ContentTypeProviderInterface $provider, string $contentTypeIdentifier, LoadedContentBlock $contentBlock): void
     {
-        $templateContent = $provider->getTemplate($contentTypeIdentifier);
+        $templateContent = $provider->getFrontendTemplate($contentTypeIdentifier);
 
         if ($templateContent) {
             GeneralUtility::writeFile(GeneralUtility::getFileAbsFileName($contentBlock->getExtPath() . '/' . $contentBlock->getPackage() . '/' . ContentBlockPathUtility::getFrontendTemplatePath()), $templateContent);
+        }
+    }
+
+    protected function copyBackendPreviewTemplate(ContentTypeProviderInterface $contentTypeProvider, string $contentTypeIdentifier, LoadedContentBlock $contentBlock): void
+    {
+        $providerTemplateContent = $contentTypeProvider->getBackendPreviewTemplate($contentTypeIdentifier);
+        $contentBlockTemplateContent = GeneralUtility::getUrl(GeneralUtility::getFileAbsFileName($contentBlock->getExtPath() . '/' . $contentBlock->getPackage() . '/' . ContentBlockPathUtility::getBackendPreviewPath()));
+
+        if ($providerTemplateContent && $contentBlockTemplateContent) {
+            // Replace content of `<f:section name="Content">` in content block template with provider template content
+            $contentBlockTemplateContent = preg_replace('/<f:section name="Content">(.*?)<\/f:section>/s', '<f:section name="Content">' . $providerTemplateContent . '</f:section>', $contentBlockTemplateContent);
+            GeneralUtility::writeFile(GeneralUtility::getFileAbsFileName($contentBlock->getExtPath() . '/' . $contentBlock->getPackage() . '/' . ContentBlockPathUtility::getBackendPreviewPath()), $contentBlockTemplateContent);
         }
     }
 
