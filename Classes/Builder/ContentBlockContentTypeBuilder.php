@@ -15,6 +15,7 @@ use TYPO3\CMS\ContentBlocks\Loader\LoadedContentBlock;
 use TYPO3\CMS\ContentBlocks\Registry\ContentBlockRegistry;
 use TYPO3\CMS\ContentBlocks\Service\PackageResolver;
 use TYPO3\CMS\ContentBlocks\Utility\ContentBlockPathUtility;
+use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use WEBcoast\Migrator\Builder\AbstractInteractiveContentTypeBuilder;
 use WEBcoast\Migrator\Provider\ContentTypeProviderInterface;
@@ -22,7 +23,7 @@ use WEBcoast\Migrator\Migration\FieldType;
 
 class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuilder
 {
-    public function __construct(protected ContentBlockRegistry $contentBlockRegistry, protected PackageResolver $packageResolver, protected ContentBlockBuilder $contentBlockBuilder)
+    public function __construct(protected ContentBlockRegistry $contentBlockRegistry, protected PackageResolver $packageResolver, protected TcaSchemaFactory $schemaFactory, protected ContentBlockBuilder $contentBlockBuilder)
     {
     }
 
@@ -60,8 +61,8 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
 
         $targetContentBlockName = self::buildContentBlockName($contentTypeConfiguration['title']);
         $targetContentBlockName = $this->io->ask('What is the name of the content block?', $targetContentBlockName, function ($value) {
-            if (empty($value) || str_contains($value, '.') || str_contains($value, '/')) {
-                throw new \RuntimeException('The name of the content block must not be empty and must not contain a dot or a slash.');
+            if (empty($value) || !preg_match('/^[a-z0-9\-]+$/', $value)) {
+                throw new \RuntimeException('The name of the content block must not be empty and must only contain lowercase characters, numbers and dashes.');
             }
 
             return $value;
@@ -191,7 +192,8 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
             )
         ];
 
-        if ($this->io->askQuestion(new ConfirmationQuestion('Do you want to use an existing field?', false))) {
+        $defaultValueForUseExistingField = $this->schemaFactory->get('tt_content')->hasField($fieldConfiguration['identifier']);
+        if ($this->io->askQuestion(new ConfirmationQuestion('Do you want to use an existing field?', $defaultValueForUseExistingField))) {
             $fieldConfiguration['useExistingField'] = true;
         }
 
@@ -289,6 +291,9 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
     protected function copyIcon(ContentTypeProviderInterface $provider, string $contentTypeIdentifier, LoadedContentBlock $contentBlock): void
     {
         $absoluteIconPath = $provider->getIcon($contentTypeIdentifier);
+        if (!$absoluteIconPath) {
+            return;
+        }
         $iconContent = file_get_contents($absoluteIconPath);
         $iconFileExt = pathinfo($absoluteIconPath, PATHINFO_EXTENSION);
 
