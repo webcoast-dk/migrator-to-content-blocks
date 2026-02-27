@@ -17,7 +17,7 @@ use TYPO3\CMS\ContentBlocks\Service\PackageResolver;
 use TYPO3\CMS\ContentBlocks\Utility\ContentBlockPathUtility;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use WEBcoast\Migrator\Builder\AbstractInteractiveContentTypeBuilder;
-use WEBcoast\Migrator\Configuration\ContentTypeProviderInterface;
+use WEBcoast\Migrator\Provider\ContentTypeProviderInterface;
 use WEBcoast\Migrator\Migration\FieldType;
 
 class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuilder
