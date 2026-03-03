@@ -8,23 +8,30 @@ use Symfony\Component\Console\Question\ChoiceQuestion;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Question\Question;
 use TYPO3\CMS\ContentBlocks\Builder\ContentBlockBuilder;
-use TYPO3\CMS\ContentBlocks\Definition\ContentType\ContentType;
+use TYPO3\CMS\ContentBlocks\Definition\ContentType\ContentType as ContentTypeEnum;
 use TYPO3\CMS\ContentBlocks\Definition\ContentType\ContentTypeIcon;
 use TYPO3\CMS\ContentBlocks\Definition\Factory\UniqueIdentifierCreator;
 use TYPO3\CMS\ContentBlocks\Loader\LoadedContentBlock;
 use TYPO3\CMS\ContentBlocks\Registry\ContentBlockRegistry;
 use TYPO3\CMS\ContentBlocks\Service\PackageResolver;
 use TYPO3\CMS\ContentBlocks\Utility\ContentBlockPathUtility;
+use TYPO3\CMS\Core\Localization\LanguageService;
 use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use WEBcoast\Migrator\Builder\AbstractInteractiveContentTypeBuilder;
+use WEBcoast\Migrator\Migration\ContentType;
+use WEBcoast\Migrator\Migration\Field;
+use WEBcoast\Migrator\Migration\FieldCollection;
+use WEBcoast\Migrator\Migration\Section;
 use WEBcoast\Migrator\Provider\ContentTypeProviderInterface;
 use WEBcoast\Migrator\Migration\FieldType;
 
 class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuilder
 {
+    protected LanguageService $languageService;
     public function __construct(protected ContentBlockRegistry $contentBlockRegistry, protected PackageResolver $packageResolver, protected TcaSchemaFactory $schemaFactory, protected ContentBlockBuilder $contentBlockBuilder)
     {
+        $this->languageService = $GLOBALS['LANG'];
     }
 
     public function getTitle(): string
@@ -32,9 +39,9 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
         return 'Content Block';
     }
 
-    public function buildContentTypeConfiguration(string $contentTypeName, array $contentTypeConfiguration, ContentTypeProviderInterface $contentTypeProvider): void
+    public function buildContentTypeConfiguration(string $contentTypeName, ContentType $contentTypeConfiguration, ContentTypeProviderInterface $contentTypeProvider): void
     {
-        $this->io->section('Creating content block configuration for  "' . $contentTypeName . '"');
+        $this->io->section(sprintf('Creating content block configuration for "%s" (%s)', $contentTypeName, $this->languageService->sL($contentTypeConfiguration->getTitle())));
 
         $availableExtensions = $this->getPossibleExtensions();
         $extensionQuestion = new Question('In which extension, should we place the content block?');
@@ -59,7 +66,7 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
             return $value;
         });
 
-        $targetContentBlockName = self::buildContentBlockName($contentTypeConfiguration['title']);
+        $targetContentBlockName = self::buildContentBlockName($contentTypeConfiguration->getIdentifier());
         $targetContentBlockName = $this->io->ask('What is the name of the content block?', $targetContentBlockName, function ($value) {
             if (empty($value) || !preg_match('/^[a-z0-9\-]+$/', $value)) {
                 throw new \RuntimeException('The name of the content block must not be empty and must only contain lowercase characters, numbers and dashes.');
@@ -72,24 +79,45 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
             throw new \RuntimeException('A content block "' . $targetVendorName . '/' . $targetContentBlockName . '" already exists.');
         }
 
+        $fullName = $targetVendorName . '/' . $targetContentBlockName;
+        $targetContentTypeName = $this->io->ask('What is the type name (CType) of the content block?', UniqueIdentifierCreator::createContentTypeIdentifier($fullName), function ($value) {
+            if (empty($value) || preg_match('/[^\w_]/', $value)) {
+                throw new \RuntimeException('The type name (CType) of the content block must not be empty and must not contain spaces.');
+            }
+
+            return $value;
+        });
+
+
+        $itemGroups = array_keys($this->schemaFactory->get('tt_content')->getField('CType')->getConfiguration()['itemGroups'] ?? []);
+        $groupQuestion = (new Question('In which wizard category should the content block be placed?', $contentTypeConfiguration->getGroup() ?: 'default'))
+            ->setAutocompleterValues($itemGroups)
+            ->setValidator(function ($value) {
+                if (empty(trim($value))) {
+                    throw new \RuntimeException('The wizard category must not be empty.');
+                }
+
+                return $value;
+            });
+        $targetCTypeGroup = $this->io->askQuestion($groupQuestion);
+
         $prefixFields = $this->io->askQuestion(new ConfirmationQuestion('Do you want to prefix the fields with the content block name?', true));
         $prefixType = null;
         if ($prefixFields) {
             $prefixType = $this->io->askQuestion(new ChoiceQuestion('What is the prefix type?', ['full', 'vendor'], 'full'));
         }
 
-        $fullName = $targetVendorName . '/' . $targetContentBlockName;
-        $description = 'Description for ' . ContentType::CONTENT_ELEMENT->getHumanReadable() . ' ' . $fullName;
+        $description = 'Description for ' . ContentTypeEnum::CONTENT_ELEMENT->getHumanReadable() . ' ' . $fullName;
         $configuration = [
             'table' => 'tt_content',
             'typeField' => 'CType',
             'name' => $fullName,
-            'typeName' => UniqueIdentifierCreator::createContentTypeIdentifier($fullName),
-            'title' => $contentTypeConfiguration['title'],
-            'description' => $contentTypeConfiguration['wizard_description'] ?: $description,
-            'group' => $contentTypeConfiguration['wizard_category'] ?: 'default',
+            'typeName' => $targetContentTypeName,
+            'title' => $contentTypeConfiguration->getTitle(),
+            'description' => $contentTypeConfiguration->getDescription() ?: $description,
+            'group' => $targetCTypeGroup,
             'prefixFields' => $prefixFields,
-            'fields' => $this->buildFieldsConfiguration($contentTypeConfiguration['fields'], $targetExtensionKey)
+            'fields' => $this->buildFieldsConfiguration($contentTypeConfiguration->getFields(), $targetExtensionKey)
         ];
 
         if ($prefixType) {
@@ -110,7 +138,7 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
             new ContentTypeIcon(),
             $targetExtensionKey,
             'EXT:' . $targetExtensionKey . '/' . ContentBlockPathUtility::getRelativeContentElementsPath(),
-            ContentType::CONTENT_ELEMENT
+            ContentTypeEnum::CONTENT_ELEMENT
         );
 
         $this->io->block('Configuration finished, saving content block "' . $contentBlock->getName() . '"', style: 'bg=green;fg=black', padding: true);
@@ -121,17 +149,17 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
         $this->copyIcon($contentTypeProvider, $contentTypeName, $contentBlock);
     }
 
-    private function buildFieldsConfiguration(array $fields, string $targetExtensionKey): array
+    private function buildFieldsConfiguration(FieldCollection $fields, string $targetExtensionKey): array
     {
         $contentBlockFields = [];
         foreach ($fields as $field) {
-            if ($field['type'] === FieldType::TAB) {
-                $this->io->writeln('<b>Tab:</b> ' . $field['title'] . ' (' . $field['identifier'] . ')');
+            if ($field->getType() === FieldType::TAB) {
+                $this->io->writeln('<b>Tab:</b> ' . $field->getLabel() . ' (' . $field->getIdentifier() . ')');
                 if ($this->io->askQuestion(new ConfirmationQuestion('Do you want to process this tab?', true))) {
                     $contentBlockFields[] = $this->buildFieldConfiguration($field, $targetExtensionKey);
                 }
             } else {
-                $this->io->writeln('<b>Field:</b> ' . $field['label'] . ' (' . $field['identifier'] . ')');
+                $this->io->writeln('<b>Field:</b> ' . $field->getLabel() . ' (' . $field->getIdentifier() . ')');
                 if ($this->io->askQuestion(new ConfirmationQuestion('Do you want to process this field?', true))) {
                     $contentBlockFields[] = $this->buildFieldConfiguration($field, $targetExtensionKey);
                 }
@@ -141,12 +169,12 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
         return $contentBlockFields;
     }
 
-    protected function buildFieldConfiguration(array $field, string $targetExtensionKey): array
+    protected function buildFieldConfiguration(Field $field, string $targetExtensionKey): array
     {
-        if ($field['type'] === FieldType::TAB) {
+        if ($field->getType() === FieldType::TAB) {
             return [
                 'identifier' => $this->io->askQuestion(
-                    (new Question('What is the identifier of the tab?', $field['identifier']))
+                    (new Question('What is the identifier of the tab?', $field->getIdentifier()))
                         ->setValidator(function ($value) {
                             if (empty($value)) {
                                 throw new \RuntimeException('The identifier of the tab must not be empty.');
@@ -157,7 +185,7 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
                 ),
                 'type' => 'Tab',
                 'label' => $this->io->askQuestion(
-                    (new Question('What is the label of the field?', $field['title']))
+                    (new Question('What is the label of the field?', $field->getLabel()))
                         ->setValidator(function ($value) {
                             if (empty($value)) {
                                 throw new \RuntimeException('The label of the field must not be empty.');
@@ -171,7 +199,7 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
 
         $fieldConfiguration = [
             'identifier' => $this->io->askQuestion(
-                (new Question('What is the identifier of the field?', GeneralUtility::camelCaseToLowerCaseUnderscored($field['identifier'])))
+                (new Question('What is the identifier of the field?', GeneralUtility::camelCaseToLowerCaseUnderscored($field->getIdentifier())))
                     ->setValidator(function ($value) {
                         if (empty($value)) {
                             throw new \RuntimeException('The identifier of the field must not be empty.');
@@ -181,7 +209,7 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
                     })
             ),
             'label' => $this->io->askQuestion(
-                (new Question('What is the label of the field?', $field['label']))
+                (new Question('What is the label of the field?', $field->getLabel()))
                     ->setValidator(function ($value) {
                         if (empty($value)) {
                             throw new \RuntimeException('The label of the field must not be empty.');
@@ -197,35 +225,8 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
             $fieldConfiguration['useExistingField'] = true;
         }
 
-        if ($field['type'] !== FieldType::SECTION) {
-            $fieldConfiguration['type'] = match ($field['type']) {
-                FieldType::CATEGORY => 'Category',
-                FieldType::CHECKBOX => 'Checkbox',
-                FieldType::COLOR => 'Color',
-                FieldType::DATETIME => 'DateTime',
-                FieldType::EMAIL => 'Email',
-                FieldType::FILE, FieldType::LEGACY_FILE => 'File',
-                FieldType::FLEXFORM => 'FlexForm',
-                FieldType::FOLDER => 'Folder',
-                FieldType::GROUP => 'Relation',
-                FieldType::IMAGE_MANIPULATION => 'ImageManipulation',
-                FieldType::INLINE => 'Collection',
-                FieldType::TEXT => 'Text',
-                FieldType::JSON => 'Json',
-                FieldType::LANGUAGE => 'Language',
-                FieldType::LINK => 'Link',
-                FieldType::NUMBER => 'Number',
-                FieldType::PASSWORD => 'Password',
-                FieldType::RADIO => 'Radio',
-                FieldType::SELECT => 'Select',
-                FieldType::SLUG => 'Slug',
-                FieldType::TEXTAREA => 'Textarea',
-                FieldType::UUID => 'Uuid',
-            };
-
-            $fieldConfiguration = array_replace_recursive($fieldConfiguration, $field['config'] ?? []);
-        } else {
-            $this->io->block('The field "' . $field['label'] . '" is a section type. Sections are converted to collections/inline records. Do want to build the collection configuration or convert the section to another field?', style: 'bg=yellow;fg=black', padding: true);
+        if ($field instanceof Section) {
+            $this->io->block('The field "' . $field->getLabel() . '" is a section type. Sections are converted to collections/inline records. Do you want to build the collection configuration or convert the section to another field?', style: 'bg=yellow;fg=black', padding: true);
 
             if ($this->io->askQuestion(new ConfirmationQuestion('Do you want to build the collection configuration (yes) or convert to another field (no)?', true))) {
                 $table = 'tx_' . str_replace('_', '', $targetExtensionKey) . '_domain_model_' . $fieldConfiguration['identifier'];
@@ -252,12 +253,39 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
 
                 $this->io->info('Let\'s continue with the section fields.');
 
-                $fieldConfiguration['fields'] = $this->buildFieldsConfiguration($field['fields'] ?? [], $targetExtensionKey);
+                $fieldConfiguration['fields'] = $this->buildFieldsConfiguration($field->getFields(), $targetExtensionKey);
             } else {
-                $this->io->info('Converting section "' . $field['title'] . '" to another field type.');
+                $this->io->info('Converting section "' . $field->getLabel() . '" to another field type.');
                 $fieldConfiguration['type'] = $this->io->askQuestion(new ChoiceQuestion('What is the field type?', ['Category', 'Checkbox', 'Color', 'DateTime', 'Email', 'File', 'FlexForm', 'Folder', 'Relation', 'ImageManipulation', 'Collection', 'Text', 'Json', 'Language', 'Link', 'None', 'Number', 'Pass', 'Password', 'Radio', 'Select', 'Slug', 'Textarea', 'Uuid'], null));
                 $fieldConfiguration['useExistingField'] = $this->io->askQuestion(new ConfirmationQuestion('Do you want to use an existing field?', true));
             }
+        } else {
+            $fieldConfiguration['type'] = match ($field->getType()) {
+                FieldType::CATEGORY => 'Category',
+                FieldType::CHECKBOX => 'Checkbox',
+                FieldType::COLOR => 'Color',
+                FieldType::DATETIME => 'DateTime',
+                FieldType::EMAIL => 'Email',
+                FieldType::FILE, FieldType::LEGACY_FILE => 'File',
+                FieldType::FLEXFORM => 'FlexForm',
+                FieldType::FOLDER => 'Folder',
+                FieldType::GROUP => 'Relation',
+                FieldType::IMAGE_MANIPULATION => 'ImageManipulation',
+                FieldType::INLINE => 'Collection',
+                FieldType::TEXT => 'Text',
+                FieldType::JSON => 'Json',
+                FieldType::LANGUAGE => 'Language',
+                FieldType::LINK => 'Link',
+                FieldType::NUMBER => 'Number',
+                FieldType::PASSWORD => 'Password',
+                FieldType::RADIO => 'Radio',
+                FieldType::SELECT => 'Select',
+                FieldType::SLUG => 'Slug',
+                FieldType::TEXTAREA => 'Textarea',
+                FieldType::UUID => 'Uuid',
+            };
+
+            $fieldConfiguration = array_replace_recursive($fieldConfiguration, $field->getConfiguration() ?? []);
         }
 
         if ($fieldConfiguration['useExistingField'] ?? false) {
@@ -322,7 +350,7 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
         return strtolower(trim($title));
     }
 
-    public function supports(array $normalizedConfiguration): bool
+    public function supports(ContentType $contentType): bool
     {
         // Supports all content types
         return true;
