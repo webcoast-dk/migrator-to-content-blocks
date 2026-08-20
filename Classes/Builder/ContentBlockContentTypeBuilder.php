@@ -318,7 +318,12 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
 
     protected function copyIcon(ContentTypeProviderInterface $provider, string $contentTypeIdentifier, LoadedContentBlock $contentBlock): void
     {
-        $absoluteIconPath = $provider->getIcon($contentTypeIdentifier);
+        try {
+            $absoluteIconPath = $provider->getIcon($contentTypeIdentifier);
+        } catch (\Throwable $e) {
+            $this->io->warning('Error while fetching icon for content type "' . $contentTypeIdentifier . '": ' . $e->getMessage() . PHP_EOL . 'Skipping icon for content type "' . $contentTypeIdentifier . '".');
+            return;
+        }
         if (!$absoluteIconPath) {
             return;
         }
