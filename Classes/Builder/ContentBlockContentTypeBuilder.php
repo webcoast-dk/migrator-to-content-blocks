@@ -199,7 +199,7 @@ class ContentBlockContentTypeBuilder extends AbstractInteractiveContentTypeBuild
 
         $fieldConfiguration = [
             'identifier' => $this->io->askQuestion(
-                (new Question('What is the identifier of the field?', GeneralUtility::camelCaseToLowerCaseUnderscored($field->getIdentifier())))
+                (new Question('What is the identifier of the field?', $field->getDbField() ?? GeneralUtility::camelCaseToLowerCaseUnderscored($field->getIdentifier())))
                     ->setValidator(function ($value) {
                         if (empty($value)) {
                             throw new \RuntimeException('The identifier of the field must not be empty.');
